@@ -1,0 +1,160 @@
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wechange-peer2-tls-cert
+  namespace: ${ORG1_NS}
+spec:
+  isCA: false
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  dnsNames:
+    - localhost
+    - wechange-peer2
+    - wechange-peer-gateway-svc
+    - wechange-peer2.${ORG1_NS}.svc.cluster.local
+    - wechange-peer2.${DOMAIN}
+    - wechange-peer2-gateway-svc.${DOMAIN}
+  ipAddresses:
+    - 127.0.0.1
+  secretName: wechange-peer2-tls-cert
+  issuerRef:
+    name: wechange-tls-cert-issuer
+
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wechange-peer2-config
+data:
+  FABRIC_CFG_PATH: /var/hyperledger/fabric/config
+  FABRIC_LOGGING_SPEC: "debug:cauthdsl,policies,msp,grpc,peer.gossip.mcs,gossip,leveldbhelper=info"
+  CORE_PEER_TLS_ENABLED: "true"
+  CORE_PEER_TLS_CERT_FILE: /var/hyperledger/fabric/config/tls/tls.crt
+  CORE_PEER_TLS_KEY_FILE: /var/hyperledger/fabric/config/tls/tls.key
+  CORE_PEER_TLS_ROOTCERT_FILE: /var/hyperledger/fabric/config/tls/ca.crt
+  CORE_PEER_ID: wechange-peer2.wechange.example.com
+  CORE_PEER_ADDRESS: wechange-peer2:7051
+  CORE_PEER_LISTENADDRESS: 0.0.0.0:7051
+  CORE_PEER_CHAINCODEADDRESS: wechange-peer2:7052
+  CORE_PEER_CHAINCODELISTENADDRESS: 0.0.0.0:7052
+  # bootstrap peer is the other peer in the same org
+  CORE_PEER_GOSSIP_BOOTSTRAP: wechange-peer1:7051
+  CORE_PEER_GOSSIP_EXTERNALENDPOINT: wechange-peer2.${ORG1_NS}.svc.cluster.local:7051
+  CORE_PEER_LOCALMSPID: WeChangeMSP
+  CORE_PEER_MSPCONFIGPATH: /var/hyperledger/fabric/organizations/peerOrganizations/wechange.example.com/peers/wechange-peer2.wechange.example.com/msp
+  CORE_OPERATIONS_LISTENADDRESS: 0.0.0.0:9443
+  CORE_PEER_FILESYSTEMPATH: /var/hyperledger/fabric/data/wechange-peer2.wechange.example.com
+  CORE_LEDGER_SNAPSHOTS_ROOTDIR: /var/hyperledger/fabric/data/wechange-peer2.wechange.example.com/snapshots
+  CHAINCODE_AS_A_SERVICE_BUILDER_CONFIG: "{\"peername\":\"wechangepeer2\"}"
+  CORE_LEDGER_STATE_STATEDATABASE: CouchDB
+  CORE_LEDGER_STATE_COUCHDBCONFIG_MAXRETRIESONSTARTUP: "20"
+  CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS: localhost:5984
+  CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME: admin
+  CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD: adminpw
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wechange-peer2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wechange-peer2
+  template:
+    metadata:
+      labels:
+        app: wechange-peer2
+        org: wechange
+    spec:
+      containers:
+        - name: main
+          image: ${FABRIC_PEER_IMAGE}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: wechange-peer2-config
+          ports:
+            - containerPort: 7051
+            - containerPort: 7052
+            - containerPort: 9443
+          volumeMounts:
+            - name: fabric-volume
+              mountPath: /var/hyperledger
+            - name: fabric-config
+              mountPath: /var/hyperledger/fabric/config
+            - name: tls-cert-volume
+              mountPath: /var/hyperledger/fabric/config/tls
+              readOnly: true
+        - name: couchdb
+          image: couchdb:3.2.1
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: "COUCHDB_USER"
+              value: "admin" 
+            - name: "COUCHDB_PASSWORD"
+              value: "adminpw"
+          ports:
+              - containerPort: 5984
+      volumes:
+        - name: fabric-volume
+          persistentVolumeClaim:
+            claimName: fabric-wechange
+        - name: fabric-config
+          configMap:
+            name: wechange-config
+        - name: tls-cert-volume
+          secret:
+            secretName: wechange-peer2-tls-cert
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wechange-peer2
+spec:
+  ports:
+    - name: grpc
+      port: 7051
+      protocol: TCP
+    - name: chaincode
+      port: 7052
+      protocol: TCP
+    - name: operations
+      port: 9443
+      protocol: TCP
+  selector:
+    app: wechange-peer2
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: 60s
+    nginx.ingress.kubernetes.io/ssl-passthrough: "true"
+  labels:
+    app: wechange-peer2
+  name: wechange-peer2
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: wechange-peer2.${DOMAIN}
+      http:
+        paths:
+          - backend:
+              service:
+                name: wechange-peer2
+                port:
+                  name: grpc
+            path: /
+            pathType: ImplementationSpecific
+  tls:
+    - hosts:
+        - wechange-peer2.${DOMAIN}

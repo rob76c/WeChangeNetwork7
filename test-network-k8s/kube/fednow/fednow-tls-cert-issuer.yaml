@@ -1,0 +1,32 @@
+#
+# Copyright IBM Corp. All Rights Reserved.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: fednow-tls-cert-issuer
+spec:
+  isCA: true
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  commonName: fednow.example.com
+  secretName: fednow-tls-cert-issuer-secret
+  issuerRef:
+    name: root-tls-cert-issuer
+    kind: Issuer
+    group: cert-manager.io
+
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: fednow-tls-cert-issuer
+spec:
+  ca:
+    secretName: fednow-tls-cert-issuer-secret
+
+

@@ -1,0 +1,1 @@
+scripts/utils.sh: line 25: 23652 Terminated: 15          tail -f ${LOG_FILE}
